@@ -4,6 +4,10 @@ library(ggplot2)
 library(dplyr)
 library(scales)
 
+# Valores por defecto para la distribución personalizada (hasta 10 puntos)
+CUSTOM_DEFAULT_Y <- c(0L, 1L, 2L, 4L, 5L, 6L, 7L, 8L, 9L, 10L)
+CUSTOM_DEFAULT_P <- c(0.55, 0.20, 0.15, 0.10, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05)
+
 # ==============================================================================
 # 1. MOTOR MATEMÁTICO Y DE SIMULACIÓN (TEORÍA DE LA RUINA EN TIEMPO DISCRETO)
 # ==============================================================================
@@ -13,8 +17,13 @@ obtener_distribucion <- function(modelo, params) {
     # Ejemplo 7.1 / 1.1: Distribución discreta finita en {0, 1, 2, 3}
     probs <- c(params$f0, params$f1, params$f2, params$f3)
     probs[is.na(probs) | probs < 0] <- 0
-    if (sum(probs) == 0) probs <- c(0.5, 0.2, 0.3, 0)
-    probs <- probs / sum(probs)
+    suma_raw <- sum(probs)
+    if (suma_raw <= 0) {
+      probs <- c(0.5, 0.2, 0.3, 0)
+      suma_raw <- 1
+    } else {
+      probs <- probs / suma_raw
+    }
     
     y_vals <- 0:3
     f_y <- probs
@@ -22,9 +31,12 @@ obtener_distribucion <- function(modelo, params) {
     F_bar <- pmax(0, 1 - F_y)
     EY <- sum(y_vals * f_y)
     
-    y_ext <- 0:200
+    y_ext <- 0:250
     f_ext <- c(f_y, rep(0, length(y_ext) - length(f_y)))
     F_bar_ext <- pmax(0, 1 - cumsum(f_ext))
+    
+    y_supp <- y_vals
+    f_supp <- f_y
     
   } else if (modelo == "ej2") {
     # Ejemplo 7.2 / 1.2: Ruina del jugador Y en {0, 2}
@@ -34,23 +46,141 @@ obtener_distribucion <- function(modelo, params) {
     F_y <- cumsum(f_y)
     F_bar <- pmax(0, 1 - F_y)
     EY <- 2 * (1 - p)
+    suma_raw <- 1
     
-    y_ext <- 0:200
+    y_ext <- 0:250
     f_ext <- c(f_y, rep(0, length(y_ext) - length(f_y)))
     F_bar_ext <- pmax(0, 1 - cumsum(f_ext))
     
-  } else {
+    y_supp <- c(0L, 2L)
+    f_supp <- c(p, 1 - p)
+    
+  } else if (modelo == "ej3") {
     # Ejemplo 7.3: Reclamaciones geométricas f(y) = (1 - p)^y * p, y = 0, 1, 2...
     p <- params$p_geom
-    y_ext <- 0:500
+    y_ext <- 0:600
     f_ext <- dgeom(y_ext, prob = p)
     F_bar_ext <- (1 - p)^(y_ext + 1)
     EY <- (1 - p) / p
+    suma_raw <- 1
     
     y_vals <- 0:15
     f_y <- f_ext[1:16]
     F_y <- cumsum(f_y)
     F_bar <- F_bar_ext[1:16]
+    
+    y_supp <- y_ext
+    f_supp <- f_ext
+    
+  } else if (modelo == "bern") {
+    # Bernoulli(p): Y en {0, 1} con P(Y = 1) = p
+    p <- params$p_bern
+    y_vals <- 0:1
+    f_y <- c(1 - p, p)
+    F_y <- cumsum(f_y)
+    F_bar <- pmax(0, 1 - F_y)
+    EY <- p
+    suma_raw <- 1
+    
+    y_ext <- 0:250
+    f_ext <- c(f_y, rep(0, length(y_ext) - length(f_y)))
+    F_bar_ext <- pmax(0, 1 - cumsum(f_ext))
+    
+    y_supp <- y_vals
+    f_supp <- f_y
+    
+  } else if (modelo == "binom") {
+    # Binomial(m, p): Y en {0, 1, ..., m}
+    m <- params$m_binom
+    p <- params$p_binom
+    y_ext <- 0:max(250, m + 50)
+    f_ext <- dbinom(y_ext, size = m, prob = p)
+    F_bar_ext <- pbinom(y_ext, size = m, prob = p, lower.tail = FALSE)
+    EY <- m * p
+    suma_raw <- 1
+    
+    lim_tab <- min(m, 15)
+    y_vals <- 0:lim_tab
+    f_y <- f_ext[1:(lim_tab + 1)]
+    F_y <- cumsum(f_y)
+    F_bar <- F_bar_ext[1:(lim_tab + 1)]
+    
+    y_supp <- 0:m
+    f_supp <- dbinom(y_supp, size = m, prob = p)
+    
+  } else if (modelo == "pois") {
+    # Poisson(lambda): Y en {0, 1, 2, ...}
+    lam <- params$lambda_pois
+    y_ext <- 0:600
+    f_ext <- dpois(y_ext, lambda = lam)
+    F_bar_ext <- ppois(y_ext, lambda = lam, lower.tail = FALSE)
+    EY <- lam
+    suma_raw <- 1
+    
+    y_vals <- 0:15
+    f_y <- f_ext[1:16]
+    F_y <- cumsum(f_y)
+    F_bar <- F_bar_ext[1:16]
+    
+    y_supp <- y_ext
+    f_supp <- f_ext
+    
+  } else if (modelo == "nbinom") {
+    # Binomial Negativa(r, p): número de fallos antes de r éxitos, E[Y] = r(1-p)/p
+    r <- params$r_nbinom
+    p <- params$p_nbinom
+    y_ext <- 0:600
+    f_ext <- dnbinom(y_ext, size = r, prob = p)
+    F_bar_ext <- pnbinom(y_ext, size = r, prob = p, lower.tail = FALSE)
+    EY <- r * (1 - p) / p
+    suma_raw <- 1
+    
+    y_vals <- 0:15
+    f_y <- f_ext[1:16]
+    F_y <- cumsum(f_y)
+    F_bar <- F_bar_ext[1:16]
+    
+    y_supp <- y_ext
+    f_supp <- f_ext
+    
+  } else {
+    # Distribución Personalizada dinámica (k puntos definidos por el usuario)
+    y_raw <- params$custom_y
+    p_raw <- params$custom_p
+    
+    y_clean <- pmax(0L, as.integer(round(ifelse(is.na(y_raw), 0L, y_raw))))
+    p_clean <- pmax(0, ifelse(is.na(p_raw), 0, p_raw))
+    
+    suma_raw <- sum(p_clean)
+    if (suma_raw <= 0) {
+      y_clean <- c(0L, 1L)
+      p_clean <- c(0.6, 0.4)
+      suma_raw <- 1
+    }
+    
+    agg <- tapply(p_clean, y_clean, sum)
+    y_supp <- as.integer(names(agg))
+    f_supp <- as.numeric(agg) / sum(agg)
+    
+    EY <- sum(y_supp * f_supp)
+    max_y <- max(y_supp)
+    
+    y_ext <- 0:max(250, max_y + 50)
+    f_ext <- numeric(length(y_ext))
+    f_ext[y_supp + 1] <- f_supp
+    F_bar_ext <- pmax(0, 1 - cumsum(f_ext))
+    
+    if (max_y <= 15) {
+      y_vals <- 0:max_y
+      f_y <- f_ext[1:(max_y + 1)]
+      F_y <- cumsum(f_y)
+      F_bar <- F_bar_ext[1:(max_y + 1)]
+    } else {
+      y_vals <- y_supp
+      f_y <- f_supp
+      F_y <- cumsum(f_y)
+      F_bar <- pmax(0, 1 - F_y)
+    }
   }
   
   list(
@@ -61,7 +191,10 @@ obtener_distribucion <- function(modelo, params) {
     y_ext = y_ext,
     f_ext = f_ext,
     F_bar_ext = F_bar_ext,
-    EY = EY
+    y_supp = y_supp,
+    f_supp = f_supp,
+    EY = EY,
+    suma_raw = suma_raw
   )
 }
 
@@ -72,7 +205,7 @@ calcular_psi_recursivo <- function(dist, u_max, modelo, params) {
   u_vec <- 0:u_max
   psi <- numeric(length(u_vec))
   
-  if (EY >= 1 - 1e-12) {
+  if (EY >= 1 - 1e-12 || f0 <= 1e-12) {
     if (abs(dist$f_ext[2] - 1) < 1e-12) {
       psi <- ifelse(u_vec == 0, 1, 0)
     } else {
@@ -105,6 +238,9 @@ calcular_psi_recursivo <- function(dist, u_max, modelo, params) {
   } else if (modelo == "ej3") {
     p <- params$p_geom
     psi_cerrada <- ((1 - p) / p)^(u_vec + 1)
+  } else if (modelo == "bern") {
+    p <- params$p_bern
+    psi_cerrada <- ifelse(u_vec == 0, p, 0)
   }
   
   data.frame(
@@ -115,14 +251,21 @@ calcular_psi_recursivo <- function(dist, u_max, modelo, params) {
 }
 
 simular_Y <- function(n_total, modelo, params, dist) {
-  if (modelo == "ej1") {
-    sample(0:3, size = n_total, replace = TRUE, prob = dist$f_tabla)
+  if (modelo == "ej1" || modelo == "custom") {
+    sample(dist$y_supp, size = n_total, replace = TRUE, prob = dist$f_supp)
   } else if (modelo == "ej2") {
     p <- params$p_jugador
     ifelse(runif(n_total) < p, 0L, 2L)
+  } else if (modelo == "ej3") {
+    rgeom(n_total, prob = params$p_geom)
+  } else if (modelo == "bern") {
+    rbinom(n_total, size = 1L, prob = params$p_bern)
+  } else if (modelo == "binom") {
+    rbinom(n_total, size = params$m_binom, prob = params$p_binom)
+  } else if (modelo == "pois") {
+    rpois(n_total, lambda = params$lambda_pois)
   } else {
-    p <- params$p_geom
-    rgeom(n_total, prob = p)
+    rnbinom(n_total, size = params$r_nbinom, prob = params$p_nbinom)
   }
 }
 
@@ -155,7 +298,7 @@ generar_trayectoria_individual <- function(u0, N, modelo, params, dist, forzar_r
 }
 
 # ==============================================================================
-# 2. INTERFAZ DE USUARIO (DOS VISTAS LIMPIAS + CONTROL JS DE BAJA LATENCIA)
+# 2. INTERFAZ DE USUARIO (RESPONSIVE AL 100% DE ZOOM + CONTROL JS)
 # ==============================================================================
 
 ui <- page_navbar(
@@ -173,37 +316,51 @@ ui <- page_navbar(
     withMathJax(),
     tags$head(
       tags$style(HTML("
+        /* Ajuste responsivo para pantallas de laptop al 100% de zoom */
         .bslib-value-box {
-          min-height: 92px !important;
-          max-height: 114px !important;
+          min-height: 84px !important;
+        }
+        .bslib-value-box .value-box-grid {
+          grid-template-columns: 52px 1fr !important;
+          align-items: center !important;
         }
         .bslib-value-box .value-box-showcase {
-          font-size: 1.8rem !important;
-          padding: 0.45rem !important;
+          font-size: 1.5rem !important;
+          padding: 0.35rem !important;
+          width: 52px !important;
         }
         .bslib-value-box .value-box-title {
-          font-size: 0.85rem !important;
-          margin-bottom: 0.15rem !important;
+          font-size: 0.80rem !important;
+          margin-bottom: 0.1rem !important;
         }
         .bslib-value-box .value-box-value {
-          font-size: 1.4rem !important;
+          font-size: 1.18rem !important;
           line-height: 1.15 !important;
+        }
+        .bslib-value-box .value-box-area {
+          padding: 0.55rem 0.7rem !important;
+        }
+        /* Evita que las pestañas del laboratorio salten a dos líneas */
+        .nav-underline .nav-link {
+          padding: 0.45rem 0.65rem !important;
+          font-size: 0.89rem !important;
+          white-space: nowrap !important;
         }
         .telemetry-card {
           border-radius: 8px;
-          padding: 10px 12px;
+          padding: 8px 10px;
           text-align: center;
           border: 1px solid #D5D8DC;
           background-color: #F8F9F9;
         }
         .telemetry-label {
-          font-size: 0.78rem;
+          font-size: 0.76rem;
           color: #566573;
           font-weight: 600;
           margin-bottom: 2px;
         }
         .telemetry-val {
-          font-size: 1.25rem;
+          font-size: 1.15rem;
           font-weight: 700;
           color: #1B4F72;
         }
@@ -215,13 +372,43 @@ ui <- page_navbar(
           color: #922B21 !important;
         }
         .narrative-box {
-          min-height: 54px;
+          min-height: 50px;
           display: flex;
           align-items: center;
-          margin-bottom: 10px !important;
+          margin-bottom: 8px !important;
+        }
+        .custom-row-grid .form-group {
+          margin-bottom: 6px !important;
+        }
+        .custom-row-grid label {
+          font-size: 0.78rem !important;
+          margin-bottom: 2px !important;
+        }
+        .guia-doc h1, .guia-doc h2 {
+          color: #1B4F72;
+          border-bottom: 1px solid #D5D8DC;
+          padding-bottom: 6px;
+          margin-top: 24px;
+        }
+        .guia-doc h3 {
+          color: #2874A6;
+          margin-top: 18px;
+        }
+        .guia-doc table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 14px 0;
+        }
+        .guia-doc th, .guia-doc td {
+          border: 1px solid #D5D8DC;
+          padding: 8px 10px;
+          text-align: left;
+        }
+        .guia-doc th {
+          background-color: #EBF5FB;
+          color: #1B4F72;
         }
       ")),
-      # Script cliente para reproducción sincronizada y pausa instantánea (0 ms)
       tags$script(HTML("
         (function() {
           let isPlaying = false;
@@ -268,7 +455,6 @@ ui <- page_navbar(
             }
           });
 
-          // Pausa inmediata en el navegador apenas se hace clic si estaba reproduciendo
           document.addEventListener('click', function(e) {
             const btn = e.target.closest('#btn_play_pause');
             if (btn && isPlaying) {
@@ -278,7 +464,6 @@ ui <- page_navbar(
             }
           }, true);
 
-          // Agenda el siguiente paso SOLO después de que la gráfica actual terminó de pintarse
           $(document).on('shiny:value', function(e) {
             if (e.name === 'plot_animacion_unica' && isPlaying) {
               clearAnimTimer();
@@ -286,7 +471,6 @@ ui <- page_navbar(
             }
           });
 
-          // Actualiza el intervalo al instante si el usuario mueve el deslizador de segundos
           $(document).on('shiny:inputchanged', function(e) {
             if (e.name === 'vel_anim') {
               currentDelay = Number(e.value) * 1000;
@@ -302,7 +486,7 @@ ui <- page_navbar(
   ),
   
   sidebar = sidebar(
-    width = 320,
+    width = 295,
     title = "Parámetros del Proceso",
     
     selectInput(
@@ -311,7 +495,12 @@ ui <- page_navbar(
       choices = c(
         "Ejemplo 7.1: Discreta Tabulada" = "ej1",
         "Ejemplo 7.2: Ruina del Jugador (0 o 2)" = "ej2",
-        "Ejemplo 7.3: Reclamaciones Geométricas" = "ej3"
+        "Ejemplo 7.3: Geométrica" = "ej3",
+        "Bernoulli(p)" = "bern",
+        "Binomial(m, p)" = "binom",
+        "Poisson(λ)" = "pois",
+        "Binomial Negativa(r, p)" = "nbinom",
+        "Personalizada (Valores y Prob. libres)" = "custom"
       ),
       selected = "ej1"
     ),
@@ -335,7 +524,7 @@ ui <- page_navbar(
       sliderInput(
         "p_jugador",
         "Probabilidad p = P(Y = 0):",
-        min = 0.10, max = 0.95, value = 0.65, step = 0.01
+        min = 0.05, max = 0.95, value = 0.65, step = 0.01
       ),
       helpText("Ganancia neta: \\(p > 0.50 \\iff E[Y] = 2(1-p) < 1\\).")
     ),
@@ -345,28 +534,65 @@ ui <- page_navbar(
       sliderInput(
         "p_geom",
         "Parámetro geométrico p:",
-        min = 0.10, max = 0.95, value = 0.60, step = 0.01
+        min = 0.05, max = 0.95, value = 0.60, step = 0.01
       ),
       helpText("Ganancia neta: \\(p > 0.50 \\iff E[Y] = \\frac{1-p}{p} < 1\\).")
     ),
     
+    conditionalPanel(
+      condition = "input.modelo == 'bern'",
+      sliderInput(
+        "p_bern",
+        "Probabilidad p = P(Y = 1):",
+        min = 0.05, max = 0.95, value = 0.40, step = 0.01
+      ),
+      helpText("Soporte \\(Y \\in \\{0, 1\\}\\), \\(E[Y] = p\\). Si \\(u \\ge 1\\) y \\(p < 1\\), \\(\\psi(u) = 0\\).")
+    ),
+    
+    conditionalPanel(
+      condition = "input.modelo == 'binom'",
+      sliderInput("m_binom", "Número de ensayos (m):", min = 1, max = 20, value = 4, step = 1),
+      sliderInput("p_binom", "Probabilidad de reclamo (p):", min = 0.01, max = 0.95, value = 0.20, step = 0.01),
+      helpText("Ganancia neta: \\(E[Y] = mp < 1\\).")
+    ),
+    
+    conditionalPanel(
+      condition = "input.modelo == 'pois'",
+      sliderInput("lambda_pois", "Tasa media (λ):", min = 0.05, max = 3.00, value = 0.75, step = 0.05),
+      helpText("Ganancia neta: \\(E[Y] = \\lambda < 1\\).")
+    ),
+    
+    conditionalPanel(
+      condition = "input.modelo == 'nbinom'",
+      sliderInput("r_nbinom", "Parámetro de dispersión (r):", min = 1, max = 15, value = 2, step = 1),
+      sliderInput("p_nbinom", "Probabilidad (p):", min = 0.10, max = 0.95, value = 0.75, step = 0.01),
+      helpText("Ganancia neta: \\(E[Y] = \\frac{r(1-p)}{p} < 1\\).")
+    ),
+    
+    conditionalPanel(
+      condition = "input.modelo == 'custom'",
+      numericInput("custom_k", "Cantidad de valores distintos (k):", value = 4, min = 2, max = 10, step = 1),
+      div(class = "custom-row-grid", uiOutput("custom_inputs_ui")),
+      uiOutput("aviso_custom_probs")
+    ),
+    
     hr(),
     sliderInput("u_inicial", "2. Capital inicial (u):", min = 0, max = 15, value = 3, step = 1),
-    sliderInput("horizonte_N", "3. Horizonte de tiempo (N):", min = 15, max = 120, value = 35, step = 5),
+    sliderInput("horizonte_N", "3. Horizonte de tiempo (N):", min = 15, max = 600, value = 35, step = 5),
     
     conditionalPanel(
       condition = "input.nav_principal === 'lab'",
       hr(),
       h6("4. Controles de Monte Carlo y Tablas"),
       sliderInput("u_max_tabla", "Capital máximo en tablas/gráficas:", min = 5, max = 20, value = 10, step = 1),
-      sliderInput("n_trayectorias", "Trayectorias en Pestaña 1:", min = 5, max = 35, value = 15, step = 1),
+      sliderInput("n_trayectorias", "Trayectorias en Pestaña 1:", min = 5, max = 100, value = 15, step = 1),
       sliderInput("n_sim", "Carteras simuladas:", min = 500, max = 10000, value = 3000, step = 500),
       actionButton("resimular", "Nuevas simulaciones", icon = icon("dice"), class = "btn-primary w-100 mt-2")
     )
   ),
   
   # ============================================================================
-  # VISTA 1: INTRODUCCIÓN VISUAL AL PROBLEMA (SIN DISTRACCIONES DE MONTE CARLO)
+  # VISTA 1: INTRODUCCIÓN VISUAL AL PROBLEMA
   # ============================================================================
   nav_panel(
     title = "1. Introducción al Problema",
@@ -376,7 +602,7 @@ ui <- page_navbar(
     card(
       card_body(
         div(
-          class = "bg-light border rounded p-2 mb-3 text-center",
+          class = "bg-light border rounded p-2 mb-2 text-center",
           HTML("<b>Proceso de riesgo:</b> \\(C_n = u + n - \\sum_{j=1}^n Y_j\\) &emsp;|&emsp; 
                 <b>Tiempo de ruina:</b> \\(\\tau = \\min\\{n \\ge 1 : C_n \\le 0\\}\\)")
         ),
@@ -404,13 +630,13 @@ ui <- page_navbar(
         
         uiOutput("telemetria_trayectoria"),
         uiOutput("estado_paso_actual"),
-        plotOutput("plot_animacion_unica", height = "460px")
+        plotOutput("plot_animacion_unica", height = "410px")
       )
     )
   ),
   
   # ============================================================================
-  # VISTA 2: LABORATORIO Y VALIDACIÓN TEÓRICA (POST-PIZARRÓN)
+  # VISTA 2: LABORATORIO Y VALIDACIÓN TEÓRICA
   # ============================================================================
   nav_panel(
     title = "2. Laboratorio y Validación Teórica",
@@ -423,36 +649,36 @@ ui <- page_navbar(
       id = "tabs_laboratorio",
       
       nav_panel(
-        title = "1. Múltiples Trayectorias",
+        title = "1. Trayectorias",
         card_body(
-          p(HTML("Evolución simultánea de múltiples realizaciones de \\(C_n\\). 
+          p(class = "mb-2", HTML("Evolución simultánea de múltiples realizaciones de \\(C_n\\). 
                  Las trayectorias en <span style='color:#C0392B; font-weight:bold;'>rojo</span> sufren ruina en el primer instante 
                  \\(\\tau = \\min\\{n \\ge 1 : C_n \\le 0\\}\\).")),
-          plotOutput("plot_trayectorias", height = "480px")
+          plotOutput("plot_trayectorias", height = "415px")
         )
       ),
       
       nav_panel(
         title = "2. Recursión vs. Simulación",
         card_body(
-          p(HTML("Validación de la probabilidad exacta \\(\\psi(u)\\) calculada con la fórmula recursiva 
+          p(class = "mb-2", HTML("Validación de la probabilidad exacta \\(\\psi(u)\\) calculada con la fórmula recursiva 
                  (<i>Proposición 7.1</i>: \\(\\psi(u) = \\sum_{y=u}^{\\infty} \\bar{F}(y) + \\sum_{y=0}^{u-1} \\psi(u-y)\\bar{F}(y)\\)) 
                  frente a la proporción empírica de ruina en Monte Carlo.")),
-          plotOutput("plot_validacion", height = "480px")
+          plotOutput("plot_validacion", height = "415px")
         )
       ),
       
       nav_panel(
         title = "3. Ley Grandes Números",
         card_body(
-          p(HTML("Convergencia casi segura \\(\\frac{C_n}{n} \\to 1 - E[Y]\\) (<i>Proposición 7.2</i>). 
+          p(class = "mb-2", HTML("Convergencia casi segura \\(\\frac{C_n}{n} \\to 1 - E[Y]\\) (<i>Proposición 7.2</i>). 
                  Bajo \\(E[Y] < 1\\) la deriva es estrictamente positiva, lo que garantiza \\(\\lim_{u \\to \\infty} \\psi(u) = 0\\).")),
-          plotOutput("plot_lln", height = "480px")
+          plotOutput("plot_lln", height = "415px")
         )
       ),
       
       nav_panel(
-        title = "4. Calculadora Recursiva",
+        title = "4. Calculadora",
         card_body(
           layout_columns(
             col_widths = c(5, 7),
@@ -471,10 +697,27 @@ ui <- page_navbar(
       nav_panel(
         title = "5. Tiempo (τ) y Severidad",
         card_body(
-          p(HTML("Distribución condicional del tiempo de ruina (\\(\\tau \\mid \\tau \\le N\\)) y de la 
+          p(class = "mb-2", HTML("Distribución condicional del tiempo de ruina (\\(\\tau \\mid \\tau \\le N\\)) y de la 
                  <b>severidad de la ruina</b> (déficit \\(-C_\\tau \\ge 0\\) en el instante de quiebra).")),
           uiOutput("ui_ruina_severidad")
         )
+      )
+    )
+  ),
+  
+  # ============================================================================
+  # VISTA 3: GUÍA DE USUARIO INTEGRADA (DESDE ARCHIVO EXTERNO guia_usuario.md)
+  # ============================================================================
+  nav_panel(
+    title = "3. Guía de Usuario",
+    value = "guia",
+    icon = icon("book-open"),
+    
+    card(
+      card_body(
+        class = "px-4 py-3 guia-doc",
+        style = "max-width: 980px; margin: 0 auto;",
+        uiOutput("contenido_guia_usuario")
       )
     )
   )
@@ -485,6 +728,33 @@ ui <- page_navbar(
 # ==============================================================================
 
 server <- function(input, output, session) {
+  
+  output$custom_inputs_ui <- renderUI({
+    k_raw <- input$custom_k
+    if (is.null(k_raw) || is.na(k_raw)) k_raw <- 4L
+    k <- min(10L, max(2L, as.integer(k_raw)))
+    
+    lapply(seq_len(k), function(i) {
+      val_y <- isolate(input[[paste0("custom_y_", i)]])
+      val_p <- isolate(input[[paste0("custom_p_", i)]])
+      if (is.null(val_y)) val_y <- CUSTOM_DEFAULT_Y[i]
+      if (is.null(val_p)) val_p <- CUSTOM_DEFAULT_P[i]
+      
+      layout_columns(
+        col_widths = c(5, 7),
+        numericInput(
+          paste0("custom_y_", i),
+          label = if (i == 1) "Valor y:" else NULL,
+          value = val_y, min = 0, max = 100, step = 1
+        ),
+        numericInput(
+          paste0("custom_p_", i),
+          label = if (i == 1) "Prob. f(y):" else NULL,
+          value = val_p, min = 0, max = 1, step = 0.05
+        )
+      )
+    })
+  })
   
   observeEvent(input$reset_ej1, {
     updateNumericInput(session, "f0", value = 0.5)
@@ -504,10 +774,31 @@ server <- function(input, output, session) {
   })
   
   params_react <- reactive({
+    k_raw <- input$custom_k
+    if (is.null(k_raw) || is.na(k_raw)) k_raw <- 4L
+    k <- min(10L, max(2L, as.integer(k_raw)))
+    
+    c_y <- numeric(k)
+    c_p <- numeric(k)
+    for (i in seq_len(k)) {
+      yi <- input[[paste0("custom_y_", i)]]
+      pi <- input[[paste0("custom_p_", i)]]
+      c_y[i] <- if (is.null(yi) || is.na(yi)) CUSTOM_DEFAULT_Y[i] else yi
+      c_p[i] <- if (is.null(pi) || is.na(pi)) CUSTOM_DEFAULT_P[i] else pi
+    }
+    
     list(
       f0 = input$f0, f1 = input$f1, f2 = input$f2, f3 = input$f3,
       p_jugador = input$p_jugador,
-      p_geom = input$p_geom
+      p_geom = input$p_geom,
+      p_bern = input$p_bern,
+      m_binom = input$m_binom,
+      p_binom = input$p_binom,
+      lambda_pois = input$lambda_pois,
+      r_nbinom = input$r_nbinom,
+      p_nbinom = input$p_nbinom,
+      custom_y = c_y,
+      custom_p = c_p
     )
   })
   
@@ -515,9 +806,49 @@ server <- function(input, output, session) {
     obtener_distribucion(input$modelo, params_react())
   })
   
+  output$aviso_custom_probs <- renderUI({
+    dist <- dist_react()
+    aviso_norm <- if (abs(dist$suma_raw - 1) > 1e-4) {
+      sprintf("Suma ingresada: %.3f (normalizada a 1). ", dist$suma_raw)
+    } else {
+      ""
+    }
+    div(
+      class = if (dist$EY < 1) "alert alert-success p-2 small mb-0 mt-1" else "alert alert-warning p-2 small mb-0 mt-1",
+      HTML(sprintf("%s<b>E[Y] = %.4f</b> (%s)", aviso_norm, dist$EY, if (dist$EY < 1) "Ganancia neta" else "Sin ganancia neta"))
+    )
+  })
+  
   psi_teorico_react <- reactive({
     u_lim <- max(input$u_max_tabla, input$u_inicial)
     calcular_psi_recursivo(dist_react(), u_lim, input$modelo, params_react())
+  })
+  
+  # ----------------------------------------------------------------------------
+  # RENDERIZADO DE LA GUÍA DE USUARIO (DESDE guia_usuario.md)
+  # ----------------------------------------------------------------------------
+  output$contenido_guia_usuario <- renderUI({
+    ruta_guia <- "guia_usuario.md"
+    if (file.exists(ruta_guia)) {
+      tagList(
+        includeMarkdown(ruta_guia),
+        tags$script(HTML("
+          if (window.MathJax) {
+            if (window.MathJax.Hub) {
+              window.MathJax.Hub.Queue(['Typeset', window.MathJax.Hub]);
+            } else if (window.MathJax.typesetPromise) {
+              window.MathJax.typesetPromise();
+            }
+          }
+        "))
+      )
+    } else {
+      div(
+        class = "alert alert-warning",
+        h5("Archivo 'guia_usuario.md' no encontrado"),
+        p("Coloca el archivo ", code("guia_usuario.md"), " en la misma carpeta donde está ", code("app.R"), " y recarga la aplicación.")
+      )
+    }
   })
   
   # ----------------------------------------------------------------------------
@@ -548,7 +879,6 @@ server <- function(input, output, session) {
     session$sendCustomMessage("control_anim", list(playing = FALSE))
   }
   
-  # Regenerar trayectoria cuando cambian parámetros del modelo
   observe({
     dist <- dist_react()
     u0 <- input$u_inicial
@@ -563,7 +893,6 @@ server <- function(input, output, session) {
     })
   })
   
-  # Detener automáticamente si cambias a la pestaña de Laboratorio
   observeEvent(input$nav_principal, {
     if (input$nav_principal != "intro") {
       detener_animacion()
@@ -589,7 +918,6 @@ server <- function(input, output, session) {
     }
   })
   
-  # Recibe cada tick enviado por JS después de terminar de pintar el frame anterior
   observeEvent(input$anim_tick, {
     req(animando())
     req(input$nav_principal == "intro")
@@ -816,7 +1144,7 @@ server <- function(input, output, session) {
       theme_minimal(base_size = 13) +
       theme(
         plot.title = element_text(face = "bold"),
-        plot.margin = margin(12, 20, 12, 12)
+        plot.margin = margin(10, 18, 10, 10)
       )
   })
   
@@ -1091,8 +1419,8 @@ server <- function(input, output, session) {
     
     layout_columns(
       col_widths = c(6, 6),
-      plotOutput("plot_tau", height = "420px"),
-      plotOutput("plot_severidad", height = "420px")
+      plotOutput("plot_tau", height = "400px"),
+      plotOutput("plot_severidad", height = "400px")
     )
   })
   
@@ -1136,4 +1464,3 @@ server <- function(input, output, session) {
 # 4. LANZAR APLICACIÓN
 # ==============================================================================
 shinyApp(ui = ui, server = server)
-

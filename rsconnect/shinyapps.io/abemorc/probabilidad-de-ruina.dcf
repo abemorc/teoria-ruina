@@ -1,0 +1,13 @@
+name: probabilidad-de-ruina
+title: probabilidad-de-ruina
+username: abemorc
+account: abemorc
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 18501423
+bundleId: 12853473
+url: https://abemorc.shinyapps.io/probabilidad-de-ruina/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: .python-version|pyproject.toml|README.md|src/teoria_ruina/__init__.py
